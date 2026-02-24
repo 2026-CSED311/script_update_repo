@@ -3,11 +3,12 @@
 !*/
 
 !*.v
+!Makefile
 !*.sv
 !*.vhd
 !*.vh
 !*.svh
-
+!*.sw?
 !*.sh
 !*.json
 !LAST_CHECKPOINT
