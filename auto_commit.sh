@@ -8,7 +8,10 @@ LOG_FILE="${SCRIPT_DIR}/program_check.log"
 PID_FILE="${SCRIPT_DIR}/.auto_commit.pid"
 LAST_CHECKPOINT="${SCRIPT_DIR}/LAST_CHECKPOINT"
 GITIGNORE_BASE_COMMIT="${GITIGNORE_BASE_COMMIT:-e409549e706a353ae556e65cab93a5aff2f97b69}"
+AUTO_COMMIT_TZ="${AUTO_COMMIT_TZ:-Asia/Seoul}"
 IS_SOURCED=0
+
+export TZ="$AUTO_COMMIT_TZ"
 
 if [[ "${BASH_SOURCE[0]}" != "$0" ]]; then
     IS_SOURCED=1
@@ -119,7 +122,7 @@ run_worker() {
     echo "$$" > "$PID_FILE"
     trap cleanup_pid EXIT
 
-    echo "Auto commit daemon started at $(date '+%Y-%m-%d %H:%M:%S')" >> "$LOG_FILE"
+    echo "Auto commit daemon started at $(date '+%Y-%m-%d %H:%M:%S %Z')" >> "$LOG_FILE"
     prepare_with_system_branch_once
 
     while true; do
