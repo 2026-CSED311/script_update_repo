@@ -3,7 +3,7 @@ set -euo pipefail
 
 # ============================================================
 # fetch.sh
-# - Uses ./ .key as the SSH private key only for this fetch
+# - Uses ~/.CSED311_key as the SSH private key only for this fetch
 # - Downloads only remote updates (no merge/rebase/checkout)
 # ============================================================
 
@@ -40,7 +40,7 @@ if [[ "$REMOTE_URL" =~ ^https?:// ]]; then
 fi
 
 STRICT_OPT="-o StrictHostKeyChecking=accept-new"
-SSH_CMD="ssh -i \"$KEY_PATH\" -o IdentitiesOnly=yes $STRICT_OPT"
+SSH_CMD="ssh -i \"$KEY_PATH\" -o IdentitiesOnly=yes -o IdentityAgent=none -o PreferredAuthentications=publickey -F /dev/null $STRICT_OPT"
 
 run_git_ssh() {
   GIT_SSH_COMMAND="$SSH_CMD" git "$@"

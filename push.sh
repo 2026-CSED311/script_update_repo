@@ -4,7 +4,7 @@ set -euo pipefail
 # Test?
 # ============================================================
 # push.sh
-# - Uses ./ .key as the SSH private key only for this push
+# - Uses ~/.CSED311_key as the SSH private key only for this push
 # - Works even if you have other ssh keys loaded
 # ============================================================
 
@@ -46,8 +46,12 @@ echo "[INFO] Remote   : $REMOTE ($REMOTE_URL)"
 echo "[INFO] Branch   : $BRANCH"
 
 STRICT_OPT="-o StrictHostKeyChecking=accept-new"
+SSH_CMD="ssh -i \"$KEY_PATH\" -o IdentitiesOnly=yes -o IdentityAgent=none -o PreferredAuthentications=publickey -F /dev/null $STRICT_OPT"
 
-GIT_SSH_COMMAND="ssh -i \"$KEY_PATH\" -o IdentitiesOnly=yes $STRICT_OPT" \
-  git push "$REMOTE" "$BRANCH"
+run_git_ssh() {
+  GIT_SSH_COMMAND="$SSH_CMD" git "$@"
+}
+
+run_git_ssh push "$REMOTE" "$BRANCH"
 
 echo "[OK] git push completed."

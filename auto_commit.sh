@@ -7,6 +7,7 @@ INTERVAL="${INTERVAL:-10}"
 LOG_FILE="${SCRIPT_DIR}/program_check.log"
 PID_FILE="${SCRIPT_DIR}/.auto_commit.pid"
 LAST_CHECKPOINT="${SCRIPT_DIR}/LAST_CHECKPOINT"
+GITIGNORE_BASE_COMMIT="${GITIGNORE_BASE_COMMIT:-e409549e706a353ae556e65cab93a5aff2f97b69}"
 IS_SOURCED=0
 
 if [[ "${BASH_SOURCE[0]}" != "$0" ]]; then
@@ -49,6 +50,30 @@ absorb_submodules() {
             echo "[$ts] Skip absorbing $sub_dir (.git busy/in-use)." >> "$LOG_FILE"
         fi
     done < <(find . -mindepth 2 -name ".git" -type d 2>/dev/null || true)
+
+    return 0
+}
+
+enforce_gitignore_from_base() {
+    local ts="$1"
+
+    if ! git cat-file -e "${GITIGNORE_BASE_COMMIT}^{commit}" >/dev/null 2>&1; then
+        echo "[$ts] baseline commit not found: $GITIGNORE_BASE_COMMIT" >> "$LOG_FILE"
+        return 0
+    fi
+
+    if ! git cat-file -e "${GITIGNORE_BASE_COMMIT}:.gitignore" >/dev/null 2>&1; then
+        echo "[$ts] .gitignore not found in baseline commit: $GITIGNORE_BASE_COMMIT" >> "$LOG_FILE"
+        return 0
+    fi
+
+    if git checkout "$GITIGNORE_BASE_COMMIT" -- .gitignore >/dev/null 2>&1; then
+        if ! git diff --quiet -- .gitignore; then
+            echo "[$ts] .gitignore restored from $GITIGNORE_BASE_COMMIT" >> "$LOG_FILE"
+        fi
+    else
+        echo "[$ts] failed to restore .gitignore from $GITIGNORE_BASE_COMMIT" >> "$LOG_FILE"
+    fi
 
     return 0
 }
@@ -103,6 +128,7 @@ run_worker() {
         timestamp="$(date "+%Y-%m-%d %H:%M:%S")"
 
         absorb_submodules "$timestamp" || true
+        enforce_gitignore_from_base "$timestamp" || true
 
         if ! status_out="$(git status --porcelain -- . ':(exclude)LAST_CHECKPOINT' 2>&1)"; then
             echo "[$timestamp] git status failed: $status_out" >> "$LOG_FILE"
