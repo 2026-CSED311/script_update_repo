@@ -1,8 +1,18 @@
 #!/usr/bin/env bash
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SCRIPT_PATH="${SCRIPT_DIR}/$(basename "${BASH_SOURCE[0]}")"
-SCRIPT_NAME="$(basename "${BASH_SOURCE[0]}")"
+# Resolve the current script path for both bash and zsh.
+SCRIPT_SELF=""
+if [[ -n "${BASH_SOURCE[0]:-}" ]]; then
+    SCRIPT_SELF="${BASH_SOURCE[0]}"
+elif [[ -n "${ZSH_VERSION:-}" ]]; then
+    SCRIPT_SELF="${(%):-%N}"
+else
+    SCRIPT_SELF="$0"
+fi
+
+SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_SELF")" && pwd)"
+SCRIPT_PATH="${SCRIPT_DIR}/$(basename "$SCRIPT_SELF")"
+SCRIPT_NAME="$(basename "$SCRIPT_SELF")"
 INTERVAL="${INTERVAL:-10}"
 LOG_FILE="${SCRIPT_DIR}/auto_commit.log"
 PID_FILE="${SCRIPT_DIR}/.auto_commit.pid"
@@ -13,7 +23,11 @@ IS_SOURCED=0
 
 export TZ="$AUTO_COMMIT_TZ"
 
-if [[ "${BASH_SOURCE[0]}" != "$0" ]]; then
+if [[ -n "${ZSH_VERSION:-}" ]]; then
+    case "${ZSH_EVAL_CONTEXT:-}" in
+        *:file) IS_SOURCED=1 ;;
+    esac
+elif [[ -n "${BASH_SOURCE[0]:-}" && "${BASH_SOURCE[0]}" != "$0" ]]; then
     IS_SOURCED=1
 fi
 
@@ -207,41 +221,123 @@ status_bg() {
 
 prompt_segment() {
     if is_running; then
-        printf "\033[31m(auto-commit)\033[0m"
+        printf "(auto-commit)"
     fi
 }
 
 hook_code() {
     cat <<EOF
-__auto_commit_prompt_hook() {
-  AUTO_COMMIT_TAG="\$("$SCRIPT_PATH" prompt)"
-  PS1="\${__AUTO_COMMIT_BASE_PS1}\${AUTO_COMMIT_TAG}"
+__auto_commit_strip_legacy_markers() {
+  local ps1="\$1"
+
+  while true; do
+    case "\${ps1}" in
+      '\[\033[31m\]\$(__auto_commit_dynamic_prefix)\[\033[0m\]'*)
+        ps1="\${ps1#'\[\033[31m\]\$(__auto_commit_dynamic_prefix)\[\033[0m\]'}"
+        ;;
+      '\$(__auto_commit_dynamic_prefix)'*)
+        ps1="\${ps1#'\$(__auto_commit_dynamic_prefix)'}"
+        ;;
+      '(auto-commit) '*)
+        ps1="\${ps1#'(auto-commit) '}"
+        ;;
+      *' | (auto-commit)\\$ ')
+        ps1="\${ps1% | (auto-commit)\\\\$ }"
+        ;;
+      *' | (auto-commit)\\$')
+        ps1="\${ps1% | (auto-commit)\\\\$}"
+        ;;
+      *' | (auto-commit)$ ')
+        ps1="\${ps1%' | (auto-commit)$ '}"
+        ;;
+      *' | (auto-commit)$')
+        ps1="\${ps1%' | (auto-commit)$'}"
+        ;;
+      *)
+        break
+        ;;
+    esac
+  done
+
+  printf "%s" "\${ps1}"
 }
-if [[ -z "\${__AUTO_COMMIT_BASE_PS1+x}" ]]; then
-  __AUTO_COMMIT_BASE_PS1="\${PS1}"
+
+__auto_commit_dynamic_prefix() {
+  local tag
+  tag="\$("$SCRIPT_PATH" prompt)"
+  if [[ -n "\${tag}" ]]; then
+    # \001/\002 mark non-printing sequences for readline prompt length accounting.
+    printf '\001\033[31m\002%s\001\033[0m\002 ' "\${tag}"
+  fi
+}
+
+# Remove legacy hook entries from older versions.
+if [[ -n "\${PROMPT_COMMAND-}" ]]; then
+  PROMPT_COMMAND="\${PROMPT_COMMAND//__auto_commit_prompt_hook; /}"
+  PROMPT_COMMAND="\${PROMPT_COMMAND//; __auto_commit_prompt_hook/}"
+  PROMPT_COMMAND="\${PROMPT_COMMAND//__auto_commit_prompt_hook/}"
 fi
-case "\${PROMPT_COMMAND-}" in
-  *__auto_commit_prompt_hook*) ;;
-  *) PROMPT_COMMAND="__auto_commit_prompt_hook\${PROMPT_COMMAND:+; \${PROMPT_COMMAND}}" ;;
-esac
+
+if [[ -n "\${__AUTO_COMMIT_BASE_PS1-}" ]]; then
+  __AUTO_COMMIT_BASE_PS1="\$(__auto_commit_strip_legacy_markers "\${__AUTO_COMMIT_BASE_PS1}")"
+else
+  __AUTO_COMMIT_BASE_PS1="\$(__auto_commit_strip_legacy_markers "\${PS1}")"
+fi
+
+PS1='\$(__auto_commit_dynamic_prefix)'"\${__AUTO_COMMIT_BASE_PS1}"
 EOF
 }
 
 unhook_code() {
         cat <<'EOF'
-# Remove the auto-commit prompt hook from this shell
+# Remove legacy prompt hook entry from this shell
 if [[ -n "${PROMPT_COMMAND-}" ]]; then
     PROMPT_COMMAND="${PROMPT_COMMAND//__auto_commit_prompt_hook; /}"
     PROMPT_COMMAND="${PROMPT_COMMAND//; __auto_commit_prompt_hook/}"
     PROMPT_COMMAND="${PROMPT_COMMAND//__auto_commit_prompt_hook/}"
 fi
-# Restore original PS1 if we saved one.
+
 if [[ -n "${__AUTO_COMMIT_BASE_PS1-}" ]]; then
     PS1="${__AUTO_COMMIT_BASE_PS1}"
+else
+    while true; do
+        case "${PS1}" in
+            '\[\033[31m\]$(__auto_commit_dynamic_prefix)\[\033[0m\]'*)
+                PS1="${PS1#'\[\033[31m\]$(__auto_commit_dynamic_prefix)\[\033[0m\]'}"
+                ;;
+            '$(__auto_commit_dynamic_prefix)'*)
+                PS1="${PS1#'$(__auto_commit_dynamic_prefix)'}"
+                ;;
+            '(auto-commit) '*)
+                PS1="${PS1#'(auto-commit) '}"
+                ;;
+            *' | (auto-commit)\$ ')
+                PS1="${PS1% | (auto-commit)\\$ }"
+                ;;
+            *' | (auto-commit)\$')
+                PS1="${PS1% | (auto-commit)\\$}"
+                ;;
+            *' | (auto-commit)$ ')
+                PS1="${PS1%' | (auto-commit)$ '}"
+                ;;
+            *' | (auto-commit)$')
+                PS1="${PS1%' | (auto-commit)$'}"
+                ;;
+            *)
+                break
+                ;;
+        esac
+    done
 fi
+
 unset AUTO_COMMIT_TAG 2>/dev/null || true
 unset __AUTO_COMMIT_BASE_PS1 2>/dev/null || true
 unset -f __auto_commit_prompt_hook 2>/dev/null || true
+unset -f __auto_commit_dynamic_prefix 2>/dev/null || true
+unset -f __auto_commit_strip_legacy_markers 2>/dev/null || true
+unset -f __auto_commit_strip_injected_tag 2>/dev/null || true
+unset -f __auto_commit_strip_prefix_tag 2>/dev/null || true
+unset -f __auto_commit_strip_prompt_char 2>/dev/null || true
 EOF
 }
 
