@@ -4,7 +4,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPT_PATH="${SCRIPT_DIR}/$(basename "${BASH_SOURCE[0]}")"
 SCRIPT_NAME="$(basename "${BASH_SOURCE[0]}")"
 INTERVAL="${INTERVAL:-10}"
-LOG_FILE="${SCRIPT_DIR}/program_check.log"
+LOG_FILE="${SCRIPT_DIR}/auto_commit.log"
 PID_FILE="${SCRIPT_DIR}/.auto_commit.pid"
 LAST_CHECKPOINT="${SCRIPT_DIR}/LAST_CHECKPOINT"
 GITIGNORE_BASE_COMMIT="${GITIGNORE_BASE_COMMIT:-e409549e706a353ae556e65cab93a5aff2f97b69}"
@@ -207,7 +207,7 @@ status_bg() {
 
 prompt_segment() {
     if is_running; then
-        printf " \033[31m(auto-commit)\033[0m"
+        printf "\033[31m(auto-commit)\033[0m"
     fi
 }
 
