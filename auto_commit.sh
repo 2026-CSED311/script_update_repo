@@ -24,7 +24,8 @@ GITIGNORE_BRANCH="${GITIGNORE_BRANCH:-system}"
 AUTO_COMMIT_TZ="${AUTO_COMMIT_TZ:-Asia/Seoul}"
 IS_SOURCED=0
 # Track already-logged oversized files to avoid repetitive log spam.
-declare -A LARGE_FILE_WARNED=()
+# Keep a newline-delimited set for bash 3.2 compatibility (no associative arrays).
+LARGE_FILE_WARNED_LIST=""
 LAST_FILTER_SUMMARY=""
 
 export TZ="$AUTO_COMMIT_TZ"
@@ -227,19 +228,22 @@ run_worker() {
         absorb_submodules "$timestamp" || true
         enforce_gitignore_from_remote "$timestamp" || true
 
-        if ! status_out="$(git status --porcelain -- . ':(exclude)LAST_CHECKPOINT' 2>&1)"; then
+        if ! status_out="$(git status --porcelain 2>&1)"; then
             echo "[$timestamp] git status failed: $status_out" >> "$LOG_FILE"
             sleep "$INTERVAL"
             continue
         fi
+        status_out="$(printf '%s\n' "$status_out" | grep -Ev '^[ MADRCU?!]{1,2} LAST_CHECKPOINT$' || true)"
 
         {
             if [[ -n "$status_out" ]]; then
-                if ! git add -A -- . ':(exclude)LAST_CHECKPOINT'; then
+                if ! git add -A -- .; then
                     echo "[$timestamp] git add failed. Retrying in next loop."
                 else
+                    # Keep checkpoint bookkeeping file out of auto commits.
+                    git restore --staged -- LAST_CHECKPOINT >/dev/null 2>&1 || true
                     unstage_large_files "$timestamp" || true
-                    if git diff --cached --quiet -- . ':(exclude)LAST_CHECKPOINT'; then
+                    if git diff --cached --quiet -- .; then
                         if [[ -n "$LAST_FILTER_SUMMARY" ]]; then
                             echo "[$timestamp] after filter [$LAST_FILTER_SUMMARY]"
                         else
