@@ -14,6 +14,7 @@ SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_SELF")" && pwd)"
 SCRIPT_PATH="${SCRIPT_DIR}/$(basename "$SCRIPT_SELF")"
 SCRIPT_NAME="$(basename "$SCRIPT_SELF")"
 INTERVAL="${INTERVAL:-10}"
+MAX_ADD_BYTES="${MAX_ADD_BYTES:-1048576}" # 1MB
 LOG_FILE="${SCRIPT_DIR}/auto_commit.log"
 PID_FILE="${SCRIPT_DIR}/.auto_commit.pid"
 LAST_CHECKPOINT="${SCRIPT_DIR}/LAST_CHECKPOINT"
@@ -49,6 +50,47 @@ cleanup_pid() {
     if [[ "$pid" == "$$" ]]; then
         rm -f "$PID_FILE"
     fi
+}
+
+ensure_safe_directory() {
+    local repo_path="$1"
+    git config --global --add safe.directory "$repo_path" >/dev/null 2>&1 || true
+}
+
+ensure_runtime_paths_writable() {
+    local fallback_base="/tmp/auto_commit_${USER:-user}_$(basename "$SCRIPT_DIR")"
+
+    if ! (touch "$LOG_FILE" >/dev/null 2>&1); then
+        LOG_FILE="${fallback_base}.log"
+        touch "$LOG_FILE" >/dev/null 2>&1 || true
+    fi
+
+    if ! (touch "$PID_FILE" >/dev/null 2>&1); then
+        PID_FILE="${fallback_base}.pid"
+        touch "$PID_FILE" >/dev/null 2>&1 || true
+    fi
+}
+
+get_file_size_bytes() {
+    local path="$1"
+    stat -c%s "$path" 2>/dev/null || wc -c < "$path" 2>/dev/null || echo 0
+}
+
+unstage_large_files() {
+    local ts="$1"
+    local path=""
+
+    while IFS= read -r -d '' path; do
+        [[ -f "$path" ]] || continue
+        local size
+        size="$(get_file_size_bytes "$path")"
+        [[ "$size" =~ ^[0-9]+$ ]] || continue
+
+        if (( size > MAX_ADD_BYTES )); then
+            git restore --staged -- "$path" >/dev/null 2>&1 || true
+            echo "[$ts] Skip large file (> $MAX_ADD_BYTES bytes): $path ($size bytes)" >> "$LOG_FILE"
+        fi
+    done < <(git diff --cached --name-only -z --diff-filter=ACMR -- . ':(exclude)LAST_CHECKPOINT')
 }
 absorb_submodules() {
     local ts="$1"
@@ -133,9 +175,11 @@ prepare_with_system_branch_once() {
 run_worker() {
     set -euo pipefail
     cd "$SCRIPT_DIR"
+    ensure_runtime_paths_writable
     echo "$$" > "$PID_FILE"
     trap cleanup_pid EXIT
 
+    ensure_safe_directory "$SCRIPT_DIR"
     echo "Auto commit daemon started at $(date '+%Y-%m-%d %H:%M:%S %Z')" >> "$LOG_FILE"
     prepare_with_system_branch_once
 
@@ -161,6 +205,12 @@ run_worker() {
                     echo "----------------------------------------"
                     continue
                 fi
+                unstage_large_files "$timestamp" || true
+                if git diff --cached --quiet -- . ':(exclude)LAST_CHECKPOINT'; then
+                    echo "[$timestamp] No commitable changes after large-file filter."
+                    echo "----------------------------------------"
+                    continue
+                fi
                 if git commit -m "auto snapshot $timestamp"; then
                     local last_hash
                     last_hash="$(git rev-parse HEAD)"
@@ -180,6 +230,7 @@ run_worker() {
 }
 
 start_bg() {
+    ensure_runtime_paths_writable
     if is_running; then
         echo "Already running (PID $(read_pid))."
         return 0
@@ -192,6 +243,7 @@ start_bg() {
 }
 
 stop_bg() {
+    ensure_runtime_paths_writable
     if ! is_running; then
         rm -f "$PID_FILE"
         echo "Not running."
@@ -212,6 +264,7 @@ stop_bg() {
 }
 
 status_bg() {
+    ensure_runtime_paths_writable
     if is_running; then
         echo "running (PID $(read_pid))"
     else
@@ -220,6 +273,7 @@ status_bg() {
 }
 
 prompt_segment() {
+    ensure_runtime_paths_writable
     if is_running; then
         printf "(auto-commit)"
     fi
