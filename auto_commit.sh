@@ -18,7 +18,9 @@ MAX_ADD_BYTES="${MAX_ADD_BYTES:-1048576}" # 1MB
 LOG_FILE="${SCRIPT_DIR}/auto_commit.log"
 PID_FILE="${SCRIPT_DIR}/.auto_commit.pid"
 LAST_CHECKPOINT="${SCRIPT_DIR}/LAST_CHECKPOINT"
-GITIGNORE_BASE_COMMIT="${GITIGNORE_BASE_COMMIT:-e409549e706a353ae556e65cab93a5aff2f97b69}"
+GITIGNORE_REMOTE="${GITIGNORE_REMOTE:-script_update_repo}"
+GITIGNORE_REMOTE_URL="${GITIGNORE_REMOTE_URL:-https://github.com/2026-CSED311/script_update_repo.git}"
+GITIGNORE_BRANCH="${GITIGNORE_BRANCH:-system}"
 AUTO_COMMIT_TZ="${AUTO_COMMIT_TZ:-Asia/Seoul}"
 IS_SOURCED=0
 # Track already-logged oversized files to avoid repetitive log spam.
@@ -135,25 +137,37 @@ absorb_submodules() {
     return 0
 }
 
-enforce_gitignore_from_base() {
+enforce_gitignore_from_remote() {
     local ts="$1"
+    local remote_ref="refs/remotes/${GITIGNORE_REMOTE}/${GITIGNORE_BRANCH}"
 
-    if ! git cat-file -e "${GITIGNORE_BASE_COMMIT}^{commit}" >/dev/null 2>&1; then
-        echo "[$ts] baseline commit not found: $GITIGNORE_BASE_COMMIT" >> "$LOG_FILE"
+    if git remote get-url "$GITIGNORE_REMOTE" >/dev/null 2>&1; then
+        git remote set-url "$GITIGNORE_REMOTE" "$GITIGNORE_REMOTE_URL" >/dev/null 2>&1 || true
+    else
+        git remote add "$GITIGNORE_REMOTE" "$GITIGNORE_REMOTE_URL" >/dev/null 2>&1 || true
+    fi
+
+    if ! git fetch --prune "$GITIGNORE_REMOTE" "$GITIGNORE_BRANCH" >/dev/null 2>&1; then
+        echo "[$ts] failed to fetch ${GITIGNORE_REMOTE}/${GITIGNORE_BRANCH}" >> "$LOG_FILE"
         return 0
     fi
 
-    if ! git cat-file -e "${GITIGNORE_BASE_COMMIT}:.gitignore" >/dev/null 2>&1; then
-        echo "[$ts] .gitignore not found in baseline commit: $GITIGNORE_BASE_COMMIT" >> "$LOG_FILE"
+    if ! git show-ref --verify --quiet "$remote_ref"; then
+        echo "[$ts] remote ref not found: ${GITIGNORE_REMOTE}/${GITIGNORE_BRANCH}" >> "$LOG_FILE"
         return 0
     fi
 
-    if git checkout "$GITIGNORE_BASE_COMMIT" -- .gitignore >/dev/null 2>&1; then
+    if ! git cat-file -e "${GITIGNORE_REMOTE}/${GITIGNORE_BRANCH}:.gitignore" >/dev/null 2>&1; then
+        echo "[$ts] .gitignore not found in ${GITIGNORE_REMOTE}/${GITIGNORE_BRANCH}" >> "$LOG_FILE"
+        return 0
+    fi
+
+    if git checkout "${GITIGNORE_REMOTE}/${GITIGNORE_BRANCH}" -- .gitignore >/dev/null 2>&1; then
         if ! git diff --quiet -- .gitignore; then
-            echo "[$ts] .gitignore restored from $GITIGNORE_BASE_COMMIT" >> "$LOG_FILE"
+            echo "[$ts] .gitignore restored from ${GITIGNORE_REMOTE}/${GITIGNORE_BRANCH}" >> "$LOG_FILE"
         fi
     else
-        echo "[$ts] failed to restore .gitignore from $GITIGNORE_BASE_COMMIT" >> "$LOG_FILE"
+        echo "[$ts] failed to restore .gitignore from ${GITIGNORE_REMOTE}/${GITIGNORE_BRANCH}" >> "$LOG_FILE"
     fi
 
     return 0
@@ -211,7 +225,7 @@ run_worker() {
         timestamp="$(date "+%Y-%m-%d %H:%M:%S")"
 
         absorb_submodules "$timestamp" || true
-        enforce_gitignore_from_base "$timestamp" || true
+        enforce_gitignore_from_remote "$timestamp" || true
 
         if ! status_out="$(git status --porcelain -- . ':(exclude)LAST_CHECKPOINT' 2>&1)"; then
             echo "[$timestamp] git status failed: $status_out" >> "$LOG_FILE"
