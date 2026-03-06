@@ -21,6 +21,9 @@ LAST_CHECKPOINT="${SCRIPT_DIR}/LAST_CHECKPOINT"
 GITIGNORE_BASE_COMMIT="${GITIGNORE_BASE_COMMIT:-e409549e706a353ae556e65cab93a5aff2f97b69}"
 AUTO_COMMIT_TZ="${AUTO_COMMIT_TZ:-Asia/Seoul}"
 IS_SOURCED=0
+# Track already-logged oversized files to avoid repetitive log spam.
+declare -A LARGE_FILE_WARNED=()
+LAST_FILTER_SUMMARY=""
 
 export TZ="$AUTO_COMMIT_TZ"
 
@@ -79,6 +82,8 @@ get_file_size_bytes() {
 unstage_large_files() {
     local ts="$1"
     local path=""
+    local entries=()
+    LAST_FILTER_SUMMARY=""
 
     while IFS= read -r -d '' path; do
         [[ -f "$path" ]] || continue
@@ -88,9 +93,26 @@ unstage_large_files() {
 
         if (( size > MAX_ADD_BYTES )); then
             git restore --staged -- "$path" >/dev/null 2>&1 || true
-            echo "[$ts] Skip large file (> $MAX_ADD_BYTES bytes): $path ($size bytes)" >> "$LOG_FILE"
+            local mtime
+            mtime="$(stat -c %Y "$path" 2>/dev/null || echo 0)"
+            entries+=("${mtime}|${path}")
+            if [[ -z "${LARGE_FILE_WARNED["$path"]+x}" ]]; then
+                echo "[$ts] Skip large file (> $MAX_ADD_BYTES bytes): $path ($size bytes)" >> "$LOG_FILE"
+                LARGE_FILE_WARNED["$path"]=1
+            fi
         fi
     done < <(git diff --cached --name-only -z --diff-filter=ACMR -- . ':(exclude)LAST_CHECKPOINT')
+
+    if (( ${#entries[@]} > 0 )); then
+        local top_paths=()
+        mapfile -t top_paths < <(
+            printf "%s\n" "${entries[@]}" \
+            | sort -t'|' -k1,1nr \
+            | cut -d'|' -f2- \
+            | head -n 5
+        )
+        LAST_FILTER_SUMMARY="$(IFS=', '; echo "${top_paths[*]}")"
+    fi
 }
 absorb_submodules() {
     local ts="$1"
@@ -199,27 +221,27 @@ run_worker() {
 
         {
             if [[ -n "$status_out" ]]; then
-                echo "----------------------------------------"
                 if ! git add -A -- . ':(exclude)LAST_CHECKPOINT'; then
                     echo "[$timestamp] git add failed. Retrying in next loop."
-                    echo "----------------------------------------"
-                    continue
-                fi
-                unstage_large_files "$timestamp" || true
-                if git diff --cached --quiet -- . ':(exclude)LAST_CHECKPOINT'; then
-                    echo "[$timestamp] No commitable changes after large-file filter."
-                    echo "----------------------------------------"
-                    continue
-                fi
-                if git commit -m "auto snapshot $timestamp"; then
-                    local last_hash
-                    last_hash="$(git rev-parse HEAD)"
-                    echo "$last_hash" > "$LAST_CHECKPOINT"
-                    echo "[$timestamp] Commit done. hash=$last_hash"
                 else
-                    echo "[$timestamp] Commit skipped or failed."
+                    unstage_large_files "$timestamp" || true
+                    if git diff --cached --quiet -- . ':(exclude)LAST_CHECKPOINT'; then
+                        if [[ -n "$LAST_FILTER_SUMMARY" ]]; then
+                            echo "[$timestamp] after filter [$LAST_FILTER_SUMMARY]"
+                        else
+                            echo "[$timestamp] after filter []"
+                        fi
+                    elif git commit -m "auto snapshot $timestamp"; then
+                        local last_hash
+                        last_hash="$(git rev-parse HEAD)"
+                        echo "$last_hash" > "$LAST_CHECKPOINT"
+                        echo "----------------------------------------"
+                        echo "[$timestamp] Commit done. hash=$last_hash"
+                        echo "----------------------------------------"
+                    else
+                        echo "[$timestamp] Commit skipped or failed."
+                    fi
                 fi
-                echo "----------------------------------------"
             else
                 echo "[$timestamp] No changes."
             fi
