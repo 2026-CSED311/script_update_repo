@@ -5,10 +5,18 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 INTERVAL="${INTERVAL:-10}"
 MAX_ADD_BYTES="${MAX_ADD_BYTES:-1048576}"
+LOG_FILE="${SCRIPT_DIR}/auto_commit.log"
+touch "$LOG_FILE" 2>/dev/null || true
 LAST_CHECKPOINT="${SCRIPT_DIR}/LAST_CHECKPOINT"
 GITIGNORE_REMOTE="${GITIGNORE_REMOTE:-script_update_repo}"
 GITIGNORE_REMOTE_URL="${GITIGNORE_REMOTE_URL:-https://github.com/2026-CSED311/script_update_repo.git}"
 GITIGNORE_BRANCH="${GITIGNORE_BRANCH:-system}"
+
+#
+# Append all stdout/stderr to auto_commit.log,
+# while still showing output in the terminal.
+#
+exec > >(tee -a "$LOG_FILE") 2>&1
 
 get_file_size_bytes() {
     local path="$1"
