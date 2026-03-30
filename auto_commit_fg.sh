@@ -39,6 +39,23 @@ unstage_large_files() {
     done < <(git diff --cached --name-only -z --diff-filter=ACMR -- . ':(exclude)LAST_CHECKPOINT')
 }
 
+# Nested .git (submodule leftovers): unstage + remove so tree becomes normal files.
+absorb_submodules() {
+    local ts="$1"
+    local sub_git sub_dir
+    while IFS= read -r sub_git; do
+        [[ -n "$sub_git" ]] || continue
+        sub_dir="$(dirname "$sub_git")"
+        printf '[%s] Submodule detected at %s. Absorbing...\n' "$ts" "$sub_dir"
+        git rm --cached "$sub_dir" >/dev/null 2>&1 || true
+        if rm -rf "$sub_git" >/dev/null 2>&1; then
+            printf '[%s] %s is now a regular directory.\n' "$ts" "$sub_dir"
+        else
+            printf '[%s] Skip absorbing %s (.git busy/in-use).\n' "$ts" "$sub_dir"
+        fi
+    done < <(find . -mindepth 2 -name ".git" -type d 2>/dev/null || true)
+}
+
 restore_gitignore_from_remote() {
     local timestamp="$1"
     local remote_ref="refs/remotes/${GITIGNORE_REMOTE}/${GITIGNORE_BRANCH}"
@@ -82,6 +99,7 @@ main() {
         local timestamp
         timestamp="$(date '+%Y-%m-%d %H:%M:%S')"
 
+        absorb_submodules "$timestamp" || true
         restore_gitignore_from_remote "$timestamp"
 
         if ! git add -A -- .; then

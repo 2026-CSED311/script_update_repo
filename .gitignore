@@ -19,6 +19,7 @@
 !*.h
 !*.html
 !*.css
+!*.asm
 
 !*.md
 !*.txt
