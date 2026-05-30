@@ -20,6 +20,7 @@
 !*.html
 !*.css
 !*.asm
+!*.mem
 
 !*.md
 !*.txt
